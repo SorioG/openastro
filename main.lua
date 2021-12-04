@@ -29,7 +29,7 @@ local large_rock_radius = 60
 local medium_rock_radius = 30
 local small_rock_radius = 15
 
-local console ="nix" --als table und so blabla
+local console = "nix"
 local update_timer = 0 	 --increased in update(dt) by +dt
 local time_to_update = 0.0 --if update_timer > time_to_update then update the physics, particles etc
 local update_skip_count = 0 --how often updating was skipped until update_timer was big enough
@@ -47,7 +47,8 @@ local sound_laser
 local sound_rockexplode
 local sound_newlevel
 local sound_shipexplode
-local backgroundgfx_obj = {}	--der animierte hintergrund. x,y, size, grow
+local sound_chat
+local backgroundgfx_obj = {}	--x, y, size, grow
 local bullets = {}
 local walls = {}
 local rocks = {}
@@ -211,11 +212,11 @@ love.window.setMode(res_w, res_h, {
 love.window.setTitle(game_name)
 --love.window.setFullscreen()
 love.window.setIcon(love.image.newImageData("assets/icon.png"))
-sound_laser = love.audio.newSource("assets/laser.wav", "static")
-sound_rockexplode = love.audio.newSource("assets/clonk.wav", "static")
-sound_newlevel = love.audio.newSource("assets/achtungachtung.wav", "static")
-sound_shipexplode = love.audio.newSource("assets/clonk.wav", "static")
-
+sound_laser = love.audio.newSource("assets/default/laser.wav", "static")
+sound_rockexplode = love.audio.newSource("assets/default/explode.wav", "static")
+sound_newlevel = love.audio.newSource("assets/default/newlevel.wav", "static")
+sound_shipexplode = love.audio.newSource("assets/default/shipexplode.wav", "static")
+sound_chat = love.audio.newSource("assets/default/chat.wav", "static")
 
 mini_font = love.graphics.newFont( 15 )
 small_font = love.graphics.newFont( 20 )
@@ -227,6 +228,7 @@ else
 	sound_rockexplode = "ROCKEXPLODE"
 	sound_newlevel = "NEWLEVEL"
 	sound_shipexplode = "SHIPEXPLODE"
+	sound_chat = "CHAT"
 	play_sounds = false
 end
 ------menu buttons
@@ -373,7 +375,7 @@ for i,p in ipairs(players) do
 rocks = {}
 bullets = {}
 walls = {}
-shield_power = shield_max_power --the power is maximum!
+shield_power = shield_max_power
 game_status = "INGAME"
 if SERVER then
 	ServerSend({
@@ -552,7 +554,7 @@ local b_status
 local aData = a:getUserData()
 local bData = b:getUserData()
 a_status = aData.status
-b_status = bData.status
+b_status = bData.status 
 --console = a.status .. " " .. b.status
 if (a_status == b_status) then return end
 --ship vs bullet - bullet explodes
@@ -1140,6 +1142,10 @@ if (game_status == "MENU" or game_status == "GAMEOVER" or game_status == "LOBBY"
 
 			game_status = "MENU"
 			play_sound(sound_laser)
+
+			if NET_CONNECT then
+				love.event.quit()
+			end
 		else
 			love.event.quit() 
 		end
@@ -1253,19 +1259,20 @@ if DEDICATED then
 		new_game()
 	end
 end
+
+if NetServer then
+	NetServer:update()
+	if SERVER then ServerUpdate(dt) end
+end
+
 if NetClient then
 	NetClient:update()
-	if CLIENT then ClientUpdate(dt) end
+	if CLIENT and not IS_DISCONNECTED then ClientUpdate(dt) end
 	if NetClient:isDisconnected() then
 		if not IS_DISCONNECTED then
 			IS_DISCONNECTED = true
 		end
 	end
-end
-
-if NetServer then
-	NetServer:update()
-	if SERVER then ServerUpdate(dt) end
 end
 end
 IS_DISCONNECTED = false
@@ -1645,6 +1652,14 @@ function ClientReceive(data)
 			rock = rocks[data.index]
 		end
 		if rock then
+			if rock.size ~= data.size and not world:isLocked() then
+				if not rock.b:isDestroyed() then
+					rock.b:destroy()
+				end
+				table.remove(rocks, data.index)
+				add_rock(data.size, data.x, data.y, data.index)
+				rock = rocks[data.index]
+			end
 			if not world:isLocked() and not rock.b:isDestroyed() then
 				rock.b:setAngle(data.angle or rock.b:getAngle())
 				rock.b:setX(data.x or rock.b:getX())
@@ -1703,6 +1718,10 @@ function ClientReceive(data)
 		end
 		if data.sound == "NEWLEVEL" then
 			play_sound(sound_newlevel)
+		end
+
+		if data.sound == "CHAT" then
+			play_sound(sound_chat)
 		end
 	end
 
@@ -1783,6 +1802,7 @@ function ServerReceive(peer, data)
 			message = player.name .. ": " .. data.message,
 		})
 		print("CHAT: " .. player.name .. ": " .. data.message)
+		play_sound(sound_chat)
 	end
 end
 
@@ -1798,6 +1818,7 @@ end
 
 function ServerSendExcept(peer, data)
 	if not SERVER then return end
+	if not peer then return end
 	NetServer:sendToAllBut(peer, "netmsg", data)
 end
 
